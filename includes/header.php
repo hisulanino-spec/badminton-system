@@ -1,4 +1,5 @@
 <?php
+ob_start(); // Enable output buffering so header() redirects work after HTML output
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
