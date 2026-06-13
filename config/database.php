@@ -1,10 +1,13 @@
 <?php
 // Database Configuration
+// Supports both Railway (production) and XAMPP (local development)
 
+// Railway injects these environment variables automatically
+// If they exist, use them. Otherwise, fall back to local XAMPP settings.
 define('DB_HOST', getenv('MYSQLHOST') ?: '127.0.0.1');
 define('DB_PORT', getenv('MYSQLPORT') ?: '3307');
 define('DB_USER', getenv('MYSQLUSER') ?: 'root');
-define('DB_PASS', getenv('MYSQLPASSWORD') !== false ? getenv('MYSQLPASSWORD') : '');
+define('DB_PASS', getenv('MYSQLPASSWORD') ?: '');
 define('DB_NAME', getenv('MYSQLDATABASE') ?: 'badminton_bracket');
 define('DB_CHARSET', 'utf8mb4');
 
@@ -30,29 +33,44 @@ function getDBConnection() {
     try {
         $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
         
-        // Auto-import database schema on remote server (like Railway) if not initialized
-        if (getenv('MYSQLHOST')) {
-            try {
-                $check = $pdo->query("SHOW TABLES LIKE 'users'");
-                if ($check->rowCount() === 0) {
-                    $sqlFile = dirname(__DIR__) . '/db.sql';
-                    if (file_exists($sqlFile)) {
-                        $sql = file_get_contents($sqlFile);
-                        // Strip CREATE DATABASE and USE statements so it imports into the allocated Railway DB name
-                        $sql = preg_replace('/CREATE DATABASE[^;]+;/i', '', $sql);
-                        $sql = preg_replace('/USE `?[a-zA-Z0-9_-]+`?;/i', '', $sql);
-                        $pdo->exec($sql);
-                    }
-                }
-            } catch (\Exception $ex) {
-                // Ignore silent errors during initialization check to not break connection
-            }
-        }
+        // Auto-import database schema on first run (for Railway deployment)
+        autoImportSchema($pdo);
         
         return $pdo;
     } catch (\PDOException $e) {
-        // In a real production app, hide sensitive details. 
-        // For development/debugging, outputting the message helps setup.
         die("Database connection failed: " . $e->getMessage());
+    }
+}
+
+/**
+ * Automatically imports db.sql schema if tables don't exist yet.
+ * This runs only once on fresh Railway deployments.
+ */
+function autoImportSchema($pdo) {
+    try {
+        // Check if the 'users' table exists
+        $result = $pdo->query("SHOW TABLES LIKE 'users'");
+        if ($result->rowCount() > 0) {
+            return; // Tables already exist, skip import
+        }
+        
+        // Find db.sql relative to this config file
+        $sqlFile = dirname(__DIR__) . '/db.sql';
+        if (!file_exists($sqlFile)) {
+            return; // No schema file found
+        }
+        
+        $sql = file_get_contents($sqlFile);
+        
+        // Remove CREATE DATABASE and USE statements (Railway creates the DB for us)
+        $sql = preg_replace('/CREATE DATABASE.*?;\s*/i', '', $sql);
+        $sql = preg_replace('/USE\s+`[^`]+`\s*;\s*/i', '', $sql);
+        
+        // Execute the schema
+        $pdo->exec($sql);
+        
+    } catch (\PDOException $e) {
+        // Silently fail - schema might already exist partially
+        error_log("Auto-import schema notice: " . $e->getMessage());
     }
 }

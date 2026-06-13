@@ -1,12 +1,15 @@
 <?php
-// Database Configuration Template
-// Copy this file to 'database.php' and update with your local credentials.
+// Database Configuration
+// Supports both Railway (production) and XAMPP (local development)
+//
+// Railway injects environment variables automatically.
+// For local development, update the fallback values below.
 
-define('DB_HOST', '127.0.0.1');
-define('DB_PORT', '3306');
-define('DB_USER', 'root');
-define('DB_PASS', '');
-define('DB_NAME', 'badminton_bracket');
+define('DB_HOST', getenv('MYSQLHOST') ?: '127.0.0.1');
+define('DB_PORT', getenv('MYSQLPORT') ?: '3306');
+define('DB_USER', getenv('MYSQLUSER') ?: 'root');
+define('DB_PASS', getenv('MYSQLPASSWORD') ?: '');
+define('DB_NAME', getenv('MYSQLDATABASE') ?: 'badminton_bracket');
 define('DB_CHARSET', 'utf8mb4');
 
 /**
@@ -30,8 +33,39 @@ function getDBConnection() {
     
     try {
         $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
+        
+        // Auto-import database schema on first run (for Railway deployment)
+        autoImportSchema($pdo);
+        
         return $pdo;
     } catch (\PDOException $e) {
         die("Database connection failed: " . $e->getMessage());
+    }
+}
+
+/**
+ * Automatically imports db.sql schema if tables don't exist yet.
+ * This runs only once on fresh Railway deployments.
+ */
+function autoImportSchema($pdo) {
+    try {
+        $result = $pdo->query("SHOW TABLES LIKE 'users'");
+        if ($result->rowCount() > 0) {
+            return;
+        }
+        
+        $sqlFile = dirname(__DIR__) . '/db.sql';
+        if (!file_exists($sqlFile)) {
+            return;
+        }
+        
+        $sql = file_get_contents($sqlFile);
+        $sql = preg_replace('/CREATE DATABASE.*?;\s*/i', '', $sql);
+        $sql = preg_replace('/USE\s+`[^`]+`\s*;\s*/i', '', $sql);
+        
+        $pdo->exec($sql);
+        
+    } catch (\PDOException $e) {
+        error_log("Auto-import schema notice: " . $e->getMessage());
     }
 }
