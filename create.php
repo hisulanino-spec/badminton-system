@@ -46,8 +46,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $db->beginTransaction();
 
             // 1. Create tournament
-            $stmt = $db->prepare("INSERT INTO tournaments (name, type, status) VALUES (?, ?, 'draft')");
-            $stmt->execute([$tournamentName, $tournamentType]);
+            $stmt = $db->prepare("INSERT INTO tournaments (name, type, status, num_rounds) VALUES (?, ?, 'draft', ?)");
+            $stmt->execute([$tournamentName, $tournamentType, $numRounds]);
             $tournamentId = $db->lastInsertId();
 
             // 2. Insert players (reuse existing name or create new)
@@ -146,6 +146,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                        <?php echo (isset($_POST['tournament_type']) && $_POST['tournament_type'] === 'random_doubles') ? 'checked' : ''; ?>>
                                 <label class="form-check-label text-white" for="fmt_doubles">
                                     👥 Random Doubles <small class="text-accent-cyan">(Social, partners randomized)</small>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="tournament_type"
+                                       id="fmt_king_court" value="king_court"
+                                       <?php echo (isset($_POST['tournament_type']) && $_POST['tournament_type'] === 'king_court') ? 'checked' : ''; ?>>
+                                <label class="form-check-label text-white" for="fmt_king_court">
+                                    👑 King Court Doubles <small class="text-accent-cyan">(Social, partners rotate, win-win/lose-lose)</small>
                                 </label>
                             </div>
                             <div class="form-check">
@@ -268,7 +276,8 @@ updateCount();
 // Toggle rounds container based on tournament type
 function toggleRoundsInput() {
     const isDoubles = document.getElementById('fmt_doubles').checked;
-    document.getElementById('rounds_container').style.display = isDoubles ? 'block' : 'none';
+    const isKingCourt = document.getElementById('fmt_king_court') && document.getElementById('fmt_king_court').checked;
+    document.getElementById('rounds_container').style.display = (isDoubles || isKingCourt) ? 'block' : 'none';
 }
 document.querySelectorAll('input[name="tournament_type"]').forEach(radio => {
     radio.addEventListener('change', toggleRoundsInput);

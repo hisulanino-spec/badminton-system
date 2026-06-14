@@ -45,8 +45,8 @@ if (isset($_POST['create_tournament'])) {
     if (empty($tname)) {
         $message = "Tournament name cannot be empty.";
         $messageType = "warning";
-    } else if ($ttype === 'random_doubles' && count($selectedPlayers) < 4) {
-        $message = "Please select at least 4 players for a Random Doubles tournament.";
+    } else if (($ttype === 'random_doubles' || $ttype === 'king_court') && count($selectedPlayers) < 4) {
+        $message = "Please select at least 4 players for a Random Doubles or King Court tournament.";
         $messageType = "warning";
     } else if (count($selectedPlayers) < 2) {
         $message = "Please select at least 2 players to start a tournament.";
@@ -56,8 +56,8 @@ if (isset($_POST['create_tournament'])) {
             $db->beginTransaction();
             
             // Insert tournament
-            $stmt = $db->prepare("INSERT INTO tournaments (name, type, status) VALUES (?, ?, 'draft')");
-            $stmt->execute([$tname, $ttype]);
+            $stmt = $db->prepare("INSERT INTO tournaments (name, type, status, num_rounds) VALUES (?, ?, 'draft', ?)");
+            $stmt->execute([$tname, $ttype, $numRounds]);
             $tournamentId = $db->lastInsertId();
             
             // Register players with seeds (automatic/shuffled)
@@ -213,6 +213,13 @@ $allTournaments = $stmtTournaments->fetchAll();
                                     Random Doubles
                                 </label>
                             </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="tournament_type" 
+                                       id="format_king_court" value="king_court">
+                                <label class="form-check-label text-white" for="format_king_court">
+                                    King Court Doubles
+                                </label>
+                            </div>
                         </div>
 
                         <!-- Number of Rounds (for Random Doubles) -->
@@ -346,7 +353,8 @@ $allTournaments = $stmtTournaments->fetchAll();
 <script>
 function toggleAdminRounds() {
     const isDoubles = document.getElementById('format_doubles').checked;
-    document.getElementById('rounds_container_admin').style.display = isDoubles ? 'block' : 'none';
+    const isKingCourt = document.getElementById('format_king_court') && document.getElementById('format_king_court').checked;
+    document.getElementById('rounds_container_admin').style.display = (isDoubles || isKingCourt) ? 'block' : 'none';
 }
 document.querySelectorAll('input[name="tournament_type"]').forEach(radio => {
     radio.addEventListener('change', toggleAdminRounds);

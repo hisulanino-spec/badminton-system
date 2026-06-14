@@ -105,7 +105,7 @@ if ($tournament['type'] === 'round_robin') {
     foreach ($allMatches as $m) { $rrRounds[$m['round']][] = $m; }
     ksort($rrRounds);
     $rrStandings = getRoundRobinStandings($db, $tournamentId);
-} else if ($tournament['type'] === 'random_doubles') {
+} else if ($tournament['type'] === 'random_doubles' || $tournament['type'] === 'king_court') {
     foreach ($allMatches as $m) { $rrRounds[$m['round']][] = $m; }
     ksort($rrRounds);
     $rrStandings = getRandomDoublesStandings($db, $tournamentId);
@@ -116,6 +116,7 @@ $formatLabel = match($tournament['type']) {
     'double_elimination' => 'Double Elimination',
     'round_robin'        => 'Round Robin',
     'random_doubles'     => 'Random Doubles (Social)',
+    'king_court'         => 'King Court Doubles',
     default              => $tournament['type']
 };
 
@@ -171,7 +172,7 @@ unset($_SESSION['feedback_message'], $_SESSION['feedback_type']);
         </div>
     <?php endif; ?>
 
-<?php if ($tournament['type'] === 'round_robin' || $tournament['type'] === 'random_doubles'): ?>
+<?php if ($tournament['type'] === 'round_robin' || $tournament['type'] === 'random_doubles' || $tournament['type'] === 'king_court'): ?>
     <!-- ============================================================
          ROUND ROBIN / SOCIAL DOUBLES ADMIN VIEW
     ============================================================ -->
@@ -490,6 +491,24 @@ function renderMatchCard($match, $playerNamesMap, $matchSets) {
         }
     }
     
+    $courtLabel = "Match #" . $match['match_number'];
+    $tType = isset($GLOBALS['tournament']['type']) ? $GLOBALS['tournament']['type'] : '';
+    if ($tType === 'king_court') {
+        $db = getDBConnection();
+        $stmtC = $db->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = ? AND round = ?");
+        $stmtC->execute([$match['tournament_id'], $match['round']]);
+        $totalMatches = intval($stmtC->fetchColumn() ?: 1);
+
+        if ($totalMatches === 1) {
+            $courtLabel = "Winner Court 🏆";
+        } else if ($match['match_number'] === 1) {
+            $courtLabel = "Winner Court 🏆";
+        } else if ($match['match_number'] === $totalMatches) {
+            $courtLabel = "Loser Court 💀";
+        } else {
+            $courtLabel = "Court " . $match['match_number'];
+        }
+    }
     ?>
     <div class="match-card-wrapper">
         <div class="match-card-main status-<?php echo $match['status']; ?> <?php echo $isClickable ? 'clickable' : ''; ?>"
@@ -508,7 +527,7 @@ function renderMatchCard($match, $playerNamesMap, $matchSets) {
              <?php endif; ?>
         >
             <div class="match-info-bar">
-                <span class="match-id fw-bold">Match #<?php echo $match['match_number']; ?></span>
+                <span class="match-id fw-bold"><?php echo $courtLabel; ?></span>
                 <span class="badge badge-status badge-status-<?php echo $match['status']; ?>">
                     <?php echo $match['status']; ?>
                 </span>

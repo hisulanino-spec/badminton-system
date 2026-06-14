@@ -489,6 +489,11 @@ function generateBracket($db, $tournamentId, $numRounds = 5) {
         return generateRandomDoublesBracket($db, $tournamentId, $numRounds);
     }
 
+    // Dispatch to king court generator if needed
+    if ($tournament['type'] === 'king_court') {
+        return generateKingCourtBracket($db, $tournamentId, $numRounds);
+    }
+
     // 2. Fetch players (for elimination formats)
 
     $stmt = $db->prepare("
@@ -1039,6 +1044,26 @@ function updateMatchScore($db, $matchId, $setScores) {
     // Resolve any further ready matches/byes after advancement
     resolveMatches($db, $match['tournament_id']);
     
+    // Check if we need to generate the next round for King Court
+    $stmtTourn = $db->prepare("SELECT type, num_rounds FROM tournaments WHERE id = ?");
+    $stmtTourn->execute([$match['tournament_id']]);
+    $tDetails = $stmtTourn->fetch();
+    if ($tDetails && $tDetails['type'] === 'king_court') {
+        // Find current round
+        $stmtMax = $db->prepare("SELECT MAX(round) FROM matches WHERE tournament_id = ?");
+        $stmtMax->execute([$match['tournament_id']]);
+        $currRound = $stmtMax->fetchColumn() ?: 1;
+
+        // Check if all matches in the current round are completed
+        $stmtInc = $db->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = ? AND round = ? AND status != 'completed'");
+        $stmtInc->execute([$match['tournament_id'], $currRound]);
+        $incRoundCount = $stmtInc->fetchColumn();
+
+        if ($incRoundCount == 0 && $currRound < $tDetails['num_rounds']) {
+            generateKingCourtNextRound($db, $match['tournament_id']);
+        }
+    }
+    
     // Check if the tournament is completely finished (e.g. all matches completed)
     checkTournamentCompletion($db, $match['tournament_id']);
     
@@ -1051,6 +1076,21 @@ function updateMatchScore($db, $matchId, $setScores) {
  * @param int $tournamentId
  */
 function checkTournamentCompletion($db, $tournamentId) {
+    $stmt = $db->prepare("SELECT type, num_rounds FROM tournaments WHERE id = ?");
+    $stmt->execute([$tournamentId]);
+    $tournament = $stmt->fetch();
+    if (!$tournament) return;
+
+    if ($tournament['type'] === 'king_court') {
+        $stmtMax = $db->prepare("SELECT MAX(round) FROM matches WHERE tournament_id = ?");
+        $stmtMax->execute([$tournamentId]);
+        $maxRound = $stmtMax->fetchColumn();
+
+        if ($maxRound < $tournament['num_rounds']) {
+            return; // More rounds to generate
+        }
+    }
+
     $stmt = $db->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = ? AND status != 'completed'");
     $stmt->execute([$tournamentId]);
     $incompleteCount = $stmt->fetchColumn();
@@ -1058,5 +1098,236 @@ function checkTournamentCompletion($db, $tournamentId) {
     if ($incompleteCount == 0) {
         $stmtUpd = $db->prepare("UPDATE tournaments SET status = 'completed' WHERE id = ?");
         $stmtUpd->execute([$tournamentId]);
+    }
+}
+
+/**
+ * Generates Round 1 for a King Court Doubles tournament.
+ * @param PDO $db
+ * @param int $tournamentId
+ * @param int $numRounds
+ * @return bool
+ */
+function generateKingCourtBracket($db, $tournamentId, $numRounds = 5) {
+    // 1. Fetch all tournament players
+    $stmt = $db->prepare("
+        SELECT player_id
+        FROM tournament_players
+        WHERE tournament_id = ?
+        ORDER BY seed ASC
+    ");
+    $stmt->execute([$tournamentId]);
+    $playerIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    $n = count($playerIds);
+    if ($n < 4) return false;
+
+    // 2. Delete any existing matches to prevent duplicates
+    $stmt = $db->prepare("DELETE FROM matches WHERE tournament_id = ?");
+    $stmt->execute([$tournamentId]);
+
+    // 3. Shuffle players for Round 1
+    shuffle($playerIds);
+
+    // 4. Pair in groups of 4
+    $numMatches = floor($n / 4);
+    $selectedPlayers = array_slice($playerIds, 0, $numMatches * 4);
+
+    $db->beginTransaction();
+    try {
+        $stmtIns = $db->prepare("
+            INSERT INTO matches (tournament_id, bracket_type, round, match_number, player1_id, player1b_id, player2_id, player2b_id, status)
+            VALUES (?, 'winner', 1, ?, ?, ?, ?, ?, 'ready')
+        ");
+
+        for ($m = 0; $m < $numMatches; $m++) {
+            $four = array_slice($selectedPlayers, $m * 4, 4);
+            // In Round 1, pair P1+P2 vs P3+P4
+            $stmtIns->execute([
+                $tournamentId,
+                $m + 1,
+                $four[0],
+                $four[1],
+                $four[2],
+                $four[3]
+            ]);
+        }
+
+        // Activate tournament
+        $stmtUpd = $db->prepare("UPDATE tournaments SET status = 'active' WHERE id = ?");
+        $stmtUpd->execute([$tournamentId]);
+
+        $db->commit();
+        return true;
+    } catch (\Exception $e) {
+        $db->rollBack();
+        return false;
+    }
+}
+
+/**
+ * Generates the next round for a King Court Doubles tournament.
+ * Group players by play count & standings, rotate partners, and insert new matches.
+ * @param PDO $db
+ * @param int $tournamentId
+ * @return bool
+ */
+function generateKingCourtNextRound($db, $tournamentId) {
+    // 1. Fetch tournament details
+    $stmt = $db->prepare("SELECT type, num_rounds FROM tournaments WHERE id = ?");
+    $stmt->execute([$tournamentId]);
+    $tournament = $stmt->fetch();
+    if (!$tournament || $tournament['type'] !== 'king_court') return false;
+
+    // 2. Determine next round number
+    $stmtMax = $db->prepare("SELECT MAX(round) FROM matches WHERE tournament_id = ?");
+    $stmtMax->execute([$tournamentId]);
+    $currentRound = intval($stmtMax->fetchColumn() ?: 0);
+    $nextRound = $currentRound + 1;
+
+    if ($nextRound > intval($tournament['num_rounds'])) {
+        return false; // Tournament is completed
+    }
+
+    // 3. Fetch all player IDs and standings (win/loss count)
+    $standings = getRandomDoublesStandings($db, $tournamentId);
+    $playerIds = array_column($standings, 'id');
+    $n = count($playerIds);
+    if ($n < 4) return false;
+
+    $numMatches = floor($n / 4);
+
+    // 4. Group players by play count to prioritize those who sat out
+    $byPlayed = [];
+    foreach ($standings as $p) {
+        $byPlayed[$p['played']][] = $p;
+    }
+    ksort($byPlayed);
+
+    $selectedPlayers = [];
+    $targetCount = $numMatches * 4;
+    foreach ($byPlayed as $playedCount => $group) {
+        // Shuffle within the group to randomize sit-outs fairly
+        shuffle($group);
+        foreach ($group as $p) {
+            if (count($selectedPlayers) < $targetCount) {
+                $selectedPlayers[] = $p;
+            }
+        }
+    }
+
+    // Sort the selected players by their overall standings (highest wins first)
+    $selectedIds = array_column($selectedPlayers, 'id');
+    $sortedSelected = [];
+    foreach ($standings as $p) {
+        if (in_array($p['id'], $selectedIds)) {
+            $sortedSelected[] = $p['id'];
+        }
+    }
+
+    // 5. Build partner and opponent history matrices
+    $partnerHistory = [];
+    $opponentHistory = [];
+    foreach ($playerIds as $p1) {
+        foreach ($playerIds as $p2) {
+            $partnerHistory[$p1][$p2] = 0;
+            $opponentHistory[$p1][$p2] = 0;
+        }
+    }
+
+    $stmtMatches = $db->prepare("
+        SELECT player1_id, player1b_id, player2_id, player2b_id
+        FROM matches
+        WHERE tournament_id = ?
+    ");
+    $stmtMatches->execute([$tournamentId]);
+    foreach ($stmtMatches->fetchAll() as $m) {
+        $p1a = $m['player1_id'];
+        $p1b = $m['player1b_id'];
+        $p2a = $m['player2_id'];
+        $p2b = $m['player2b_id'];
+
+        if ($p1a && $p1b) {
+            $partnerHistory[$p1a][$p1b]++;
+            $partnerHistory[$p1b][$p1a]++;
+        }
+        if ($p2a && $p2b) {
+            $partnerHistory[$p2a][$p2b]++;
+            $partnerHistory[$p2b][$p2a]++;
+        }
+        if ($p1a && $p2a) {
+            $opponentHistory[$p1a][$p2a]++; $opponentHistory[$p2a][$p1a]++;
+        }
+        if ($p1a && $p2b) {
+            $opponentHistory[$p1a][$p2b]++; $opponentHistory[$p2b][$p1a]++;
+        }
+        if ($p1b && $p2a) {
+            $opponentHistory[$p1b][$p2a]++; $opponentHistory[$p2a][$p1b]++;
+        }
+        if ($p1b && $p2b) {
+            $opponentHistory[$p1b][$p2b]++; $opponentHistory[$p2b][$p1b]++;
+        }
+    }
+
+    $db->beginTransaction();
+    try {
+        $stmtIns = $db->prepare("
+            INSERT INTO matches (tournament_id, bracket_type, round, match_number, player1_id, player1b_id, player2_id, player2b_id, status)
+            VALUES (?, 'winner', ?, ?, ?, ?, ?, ?, 'ready')
+        ");
+
+        for ($c = 0; $c < $numMatches; $c++) {
+            $four = array_slice($sortedSelected, $c * 4, 4);
+
+            // Three configurations to split 4 players into 2 teams
+            $configs = [
+                [['p1' => $four[0], 'p2' => $four[1]], ['p1' => $four[2], 'p2' => $four[3]]], // P1+P2 vs P3+P4
+                [['p1' => $four[0], 'p2' => $four[3]], ['p1' => $four[1], 'p2' => $four[2]]], // P1+P4 vs P2+P3
+                [['p1' => $four[0], 'p2' => $four[2]], ['p1' => $four[1], 'p2' => $four[3]]]  // P1+P3 vs P2+P4
+            ];
+
+            $bestConfigIdx = 0;
+            $minPenalty = INF;
+
+            foreach ($configs as $idx => $conf) {
+                $t1_p1 = $conf[0]['p1'];
+                $t1_p2 = $conf[0]['p2'];
+                $t2_p1 = $conf[1]['p1'];
+                $t2_p2 = $conf[1]['p2'];
+
+                // Partnership repetition penalty (weighted high to force partner rotation)
+                $p_penalty = $partnerHistory[$t1_p1][$t1_p2] + $partnerHistory[$t2_p1][$t2_p2];
+                // Opponent repetition penalty (weighted low)
+                $o_penalty = $opponentHistory[$t1_p1][$t2_p1] + $opponentHistory[$t1_p1][$t2_p2] +
+                             $opponentHistory[$t1_p2][$t2_p1] + $opponentHistory[$t1_p2][$t2_p2];
+
+                $penalty = $p_penalty * 10 + $o_penalty;
+                if ($penalty < $minPenalty) {
+                    $minPenalty = $penalty;
+                    $bestConfigIdx = $idx;
+                }
+            }
+
+            $bestConf = $configs[$bestConfigIdx];
+
+            // In subsequent rounds, dynamically label bracket_type:
+            // Since we can only store winner/loser/etc., we keep 'winner' for DB ENUM compatibility.
+            // Court labels (Winner Court / Loser Court) will be determined in rendering.
+            $stmtIns->execute([
+                $tournamentId,
+                $nextRound,
+                $c + 1,
+                $bestConf[0]['p1'],
+                $bestConf[0]['p2'],
+                $bestConf[1]['p1'],
+                $bestConf[1]['p2']
+            ]);
+        }
+
+        $db->commit();
+        return true;
+    } catch (\Exception $e) {
+        $db->rollBack();
+        return false;
     }
 }

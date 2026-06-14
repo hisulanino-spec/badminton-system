@@ -13,7 +13,7 @@ function isAdminLoggedIn() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo isset($pageTitle) ? $pageTitle . " - StoneBoysClub" : "StoneBoysClub - Badminton Tournament System"; ?></title>
+    <title><?php echo isset($pageTitle) ? $pageTitle . " - StoneBoysClub" : "StoneBoysClub - Tournament System"; ?></title>
     
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">

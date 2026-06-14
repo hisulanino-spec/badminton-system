@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS `tournaments` (
   `name` VARCHAR(100) NOT NULL,
   `type` VARCHAR(50) NOT NULL,
   `status` ENUM('draft', 'active', 'completed') DEFAULT 'draft',
+  `num_rounds` INT DEFAULT 5,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

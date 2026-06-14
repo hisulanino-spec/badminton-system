@@ -43,7 +43,7 @@ $tournaments = $stmt->fetchAll();
         <div class="col-lg-8">
             <i class="fa-solid fa-ranking-stars text-accent-violet fs-1 mb-3 animate-bounce"></i>
             <h1 class="font-outfit fw-extrabold tracking-tight text-white display-5 mb-2">
-                Badminton Tournament <span class="text-accent-cyan">Portal</span>
+                Tournament <span class="text-accent-cyan">Portal</span>
             </h1>
             <p class="text-muted fs-5">
                 Track live scores, view brackets, and follow your favorite players in real time.
@@ -77,6 +77,7 @@ $tournaments = $stmt->fetchAll();
                         <option value="double_elimination" <?php echo $format === 'double_elimination' ? 'selected' : ''; ?>>Double Elimination</option>
                         <option value="round_robin" <?php echo $format === 'round_robin' ? 'selected' : ''; ?>>Round Robin</option>
                         <option value="random_doubles" <?php echo $format === 'random_doubles' ? 'selected' : ''; ?>>Random Doubles</option>
+                        <option value="king_court" <?php echo $format === 'king_court' ? 'selected' : ''; ?>>King Court Doubles</option>
                     </select>
                 </div>
                 
