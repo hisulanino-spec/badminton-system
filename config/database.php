@@ -84,18 +84,14 @@ function autoImportSchema($pdo) {
      */
 function autoMigrateSchema($pdo) {
         try {
-                    // Check if 'tournaments' table exists before migrating
                     $result = $pdo->query("SHOW TABLES LIKE 'tournaments'");
                     if ($result->rowCount() === 0) {
-                                    return; // Table doesn't exist yet, autoImportSchema will handle it
+                                    return;
                     }
-
-                    // Migration: Add 'num_rounds' column to tournaments if missing
                     $cols = $pdo->query("SHOW COLUMNS FROM tournaments LIKE 'num_rounds'");
                     if ($cols->rowCount() === 0) {
                                     $pdo->exec("ALTER TABLE tournaments ADD COLUMN `num_rounds` INT DEFAULT 5");
                     }
-
         } catch (\PDOException $e) {
                     error_log("Auto-migrate schema notice: " . $e->getMessage());
         }
